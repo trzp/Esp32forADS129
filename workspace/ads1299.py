@@ -22,6 +22,7 @@ import esp
 from machine import Pin
 from machine import SPI
 from machine import PWM
+from ads1299_locals import *
 
 
 # ADS1299 COMMANDS
@@ -50,26 +51,63 @@ class Ads1299:
     self._CS = Pin(cs,Pin.OUT,value=1)
   
     # SPI init
-    self.spi = SPI(1,baudrate=40000000,sck=Pin(sclk),mosi=Pin(mosi),miso=Pin(miso))
+    self.spi = SPI(1,baudrate=4000000,sck=Pin(sclk),mosi=Pin(mosi),miso=Pin(miso))
     
     # master clock init,配合clksel引脚置高，选择使用外部时钟2.048MHz
     self.pwm = PWM(Pin(clk,Pin.OUT),freq=2048000,duty=512)
     self._tclk = 0.5  #us
+    self.buf = bytearray(27)
+    
+    time.sleep_ms(50)
     
   def _data_ready(self,pin):
-    pass
+    self.spi.read_into(self.buf)
     
   def read_data(self):
     return 0
+    
+  def write_register(self,address,value):
+    opcode = address + 0x40   # wreg expects 010rrrrr, where rrrrr = address
+    self.spi.write(opcode)
+    self.spi.write('0x00')
+    self.spi.write(value)
   
   def init(self):
-    time.sleep(0.1)
+    # recommended power up sequence requiers >Tpor (2*18*0.5us @2.048MHz)
+    time.sleep_ms(150)
+    # reset the device
+    self._RESET.value(0)
+    time.sleep_us(4)
     self._RESET.value(1)
-    time.sleep(0.2)       #delay for power-on Reset: tpor > 2**18 tclk
-    self._CS.value(0)     #片选
-    time.sleep_us(18*self._tclk)  #wait for 18tclk
+    time.sleep_us((18+10)*self._tclk)
     
+    # reset the on-board ADS registers and stop datacontiuous mode 
+    self._CS.value(0)     #片选
+    time.sleep_us((18+10)*self._tclk)  #wait for 18tclk
+    
+    # enter the configure mode
     self.spi.write(SDATAC)
+    time.sleep_ms(10)
+    
+    # turn off clk output and set sampling rate 500Hz
+    self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | SAMPLE_RATE_500)
+    
+    # DEFAULT CHANNEL SETTINGS FOR ADS line:2727
+    # 老复杂的寄存器配置
+    
+    
+    time.sleep_us(4)
+    self.write_register(CONFIG3,0b11101100)
+    time.sleep_ms(1)  # enable internal reference drive and etc.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     time.sleep_us(4*self._tclk)
     self.spi.write(START)
     time.sleep_us(3)
@@ -189,6 +227,10 @@ if __name__ == '__main__':
   amp = EEGamp()
   amp.mainloop()
   
+
+
+
+
 
 
 
