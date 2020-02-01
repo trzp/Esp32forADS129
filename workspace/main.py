@@ -1,5 +1,16 @@
 
+from mq import *
 
-from test1 import main
+import esp
+esp.osdebug(None)
 
-main()
+if __name__ == '__main__':
+    main()
+
+
+
+
+
+
+
+
