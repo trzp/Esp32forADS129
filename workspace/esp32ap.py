@@ -10,6 +10,7 @@
 
 
 import network
+import utime
 
 class Esp32Ap:
   def __init__(self,essid='ESP32',myip='192.168.66.1'):
@@ -21,6 +22,8 @@ class Esp32Ap:
     self.gateway = '.'.join(tem)
      
     self.ap = network.WLAN(network.AP_IF)
+    self.ap.active(False)
+    utime.sleep(0.5)
     self.ap.active(True)
     self.ap.ifconfig((self.myip, '255.255.255.0', self.gateway, '255.255.255.255'))
     self.ap.config(essid=self.essid,password='12345')
@@ -31,3 +34,9 @@ class Esp32Ap:
     
   def isconnected(self):
     return self.ap.isconnected()
+    
+def test():
+  ap = Esp32Ap()
+
+
+

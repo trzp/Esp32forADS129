@@ -1,11 +1,30 @@
 
-from mq import *
+#from esp32ap import Esp32Ap
+#from ads1299 import Ads1299
+#import utime
 
-import esp
-esp.osdebug(None)
+from machine import SPI,Pin
+import utime
+import struct
+from ads1299 import *
+  
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
