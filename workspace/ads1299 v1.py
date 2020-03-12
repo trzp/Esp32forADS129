@@ -29,21 +29,27 @@ import struct
 PINCONFIG = {'drdy':27, 'miso':12, 'sclk':14, 'mosi':13, 'cs':26, 'reset':33, 'pown':32}
 
 
+# 硬件连接说明
+# reset 引脚拉高，使用命令复位，节省io
+# pown 连接一路io,用于在闲置时省电（5uW）,恢复需要150ms
+# 默认启用in1N - in8N引脚，将srb2连接至所有通道的正输入端即in1P - in8P. srb1断开
+
+
 class Ads1299:
   def __init__(self,pinconfig = PINCONFIG,fs = 250):
     self.virgin = True
     
-    # test
-    self.co = 0
-    self.data_num = 0
-    self.max_data_num = 500
+    #test
+    # self.co = 0
+    # self.data_num = 0
+    # self.max_data_num = 500
     
     data_ready = Pin(pinconfig['drdy'],Pin.IN,Pin.PULL_UP) # 内部上拉，默认高电平，捕捉下降沿
     data_ready.irq(trigger=Pin.IRQ_FALLING,handler=self._data_ready_callback)
-    
-    self.rst = Pin(pinconfig['reset'],Pin.OUT)
-    self.cs = Pin(pinconfig['cs'],Pin.OUT) #使能
-    self.pown = Pin(pinconfig['pown'],Pin.OUT,value=0)  #默认低功耗设置
+
+    self.cs = Pin(pinconfig['cs'],Pin.OUT)      #使能
+    self.pown = Pin(pinconfig['pown'],Pin.OUT)  #低功耗引脚
+
     
     # SPI init
     self.spi = SPI(1,baudrate=4000000,polarity=0,phase=1,firstbit=SPI.MSB,sck=Pin(pinconfig['sclk']),mosi=Pin(pinconfig['mosi']),miso=Pin(pinconfig['miso']))
@@ -90,18 +96,18 @@ class Ads1299:
     self.spi.write(BYTESMAP[data])
     utime.sleep_us(20)
     
-  def channel_setting(self,power_down = False, gain_set = ADS_GAIN24,input_type = ADSINPUT_NORMAL, SRB2_set = True):
-    setting = 0x00
-    if power_down:  setting |= 0x80
-    setting |= gain_set
-    setting |= input_type
-    if SRB2_set:    setting |= 0x08
-    
-    for i in range(8):  #对8个通道逐个进行增益和输入模式配置
+  def channel_setting(self,gain_set = ADS_GAIN24,input_type = ADSINPUT_NORMAL):
+    setting |= 0x80          # power_down false
+    setting |= gain_set      # 增益 
+    setting |= input_type    # 模式
+    setting |= 0x08          # 连接srb2,即将该通道的正端连接到srb2(所有通道的正端连接到srb2作为共同参考电极输入)
+
+    for i in range(8):  #对8个通道逐个配置
       self.write_register(CH1SET + i,setting)
-    
-    # 注意 openbci中line:2583-2616未复现
-    
+      
+    # BIAS_SENSN, BIAS_SENSP寄存器用于将通道连接到BIAS放大器反馈给其他通道用于抑制工模等噪声，相比较直接使用电极
+    # 作为bias_in，可能有更好的效果。默认不开启。以后可以尝试
+
   def write_register(self,address,value):
     # 写寄存器步骤
     # stp1:写寄存器地址
@@ -109,41 +115,34 @@ class Ads1299:
     # stp3:连续写入n+1个寄存器值
     addr = address + 0x40
     self.spi.write(BYTESMAP[addr])
-    self.spi.write(BYTESMAP[0])     #默认只写入一个值
+    self.spi.write(b'\x00')     #默认只写入一个值
     self.spi.write(BYTESMAP[value])
     utime.sleep_us(20)
     
   def start(self):
+    if self.virgin:       #初次，等待vcap1充电
+      utime.sleep_ms(50)
+      self.virgin = False
+
+    utime.sleep_ms(1)
     self.cs.value(0)      #片选
     self.pown.value(1)    #唤醒
-    self.rst.value(1)     #复位
-    utime.sleep_us(50)
-    self.rst.value(0)
-    utime.sleep_us(100)
-    self.rst.value(1)
-    
-    if self.virgin:       #初次，等待vcap1充电
-      utime.sleep_ms(500)
-      self.virgin = False
-    else:
-      utime.sleep_us(100)
-    
+    utime.sleep_ms(150)   #需要150ms唤醒
+    self.write_cmd(RESET) #复位
+    utime.sleep_us(12)
+
     # 进入配置模式
     self.write_cmd(SDATAC)
     
     # 配置寄存器1：菊花链、时钟、采样率等
     # 一旦启用CLOCK_EN，将可以从clk观察到2.048Mhz波形输出,可用于调试
-    #self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | SAMPLE_RATE_8K | CLOCK_EN)
-    self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | self.samplingrate | CLOCK_EN)
-    #self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | self.samplingrate)
-    
-    
-    # 配置寄存器2：测试信号
-    # 不配置
-    
+    #self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | self.samplingrate | CLOCK_EN)
+    self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | self.samplingrate)
+
     # 配置通道：增益、输入模式等
     self.channel_setting()
     
+    # 配置右腿驱动，将所有信号通道（包括正负）都用于产生共模信号来输出到右腿驱动信号 bias_out
     self.write_register(BIAS_SENSP,0xff)
     self.write_register(BIAS_SENSN,0xff)
     
@@ -151,9 +150,9 @@ class Ads1299:
     self.write_register(CONFIG3,0b11101100)
     
     # 完成配置，启动
-    self.write_cmd(START)
     self.write_cmd(RDATAC)  #进入读数据模式
-    utime.sleep_ms(25)
+    self.write_cmd(START)
+
     
   def stop(self):
     self.write_cmd(SDATAC)
@@ -171,7 +170,6 @@ def main():
     utime.sleep(1)
   
   ads.stop()
-
 
 
 

@@ -8,6 +8,9 @@
 
 #
 
+import esp
+esp.osdebug(None)
+
 
 import network
 import utime
@@ -37,6 +40,7 @@ class Esp32Ap:
     
 def test():
   ap = Esp32Ap()
+
 
 
 
