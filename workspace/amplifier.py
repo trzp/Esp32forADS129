@@ -24,8 +24,9 @@ class Amplifier():
     # 该操作的目的是让上位机向esp32暴露自己的地址
     _,self._addr = self.sock.recvfrom(128)  #上位机完成连接
     print('[Net] connected')
-     
-    self.ads.start()  #启动ads
+    
+    self.ads.reset()
+    self.ads.start_loff_detect()  #启动ads
     print('[Ads] started')
     
     data = bytearray(0)
@@ -53,6 +54,7 @@ def main():
   amp = Amplifier()
   while True:
     amp.run()
+
 
 
 

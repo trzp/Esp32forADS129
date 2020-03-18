@@ -28,10 +28,14 @@ import struct
 
 PINCONFIG = {'drdy':27, 'miso':12, 'sclk':14, 'mosi':13, 'cs':26, 'reset':33, 'pown':32}
 
+EEGACQUIRE = 0x01
+LOFFDETECT = 0x02
+
 
 class Ads1299:
   def __init__(self,pinconfig = PINCONFIG,fs = 250):
     self.virgin = True
+    self.mode = EEGACQUIRE
     
     # test
     self.co = 0
@@ -61,10 +65,11 @@ class Ads1299:
       self.samplingrate = SAMPLE_RATE_250
     else:
       self.samplingrate = SAMPLE_RATE_250
-    
-    
-    
+
   def _data_ready_callback(self,pin):
+    # 数据格式
+    # 24bits status + ch1(24bits) + ch2(24bits) + ...
+    # status: 1100 + LOFF_STATP(8 bits) + LOFF_STATN(8 bits) + bits[4:7] of GPIO
     buf = bytearray(27)
     self.spi.readinto(buf)
     self.status = buf[:3]
@@ -76,9 +81,9 @@ class Ads1299:
     if self.data_num > self.max_data_num:
       self.buffer = bytearray(0)
       self.data_num = 0
-      
+
     self.co += 1
-      
+
   def read_data(self):  # output interface
     # int24高位先行
     buf = self.buffer
@@ -91,6 +96,7 @@ class Ads1299:
     utime.sleep_us(20)
     
   def channel_setting(self,power_down = False, gain_set = ADS_GAIN24,input_type = ADSINPUT_NORMAL, SRB2_set = True):
+    # 这里从N-side输入信号，将所有P-side连接至srb2
     setting = 0x00
     if power_down:  setting |= 0x80
     setting |= gain_set
@@ -99,9 +105,7 @@ class Ads1299:
     
     for i in range(8):  #对8个通道逐个进行增益和输入模式配置
       self.write_register(CH1SET + i,setting)
-    
-    # 注意 openbci中line:2583-2616未复现
-    
+
   def write_register(self,address,value):
     # 写寄存器步骤
     # stp1:写寄存器地址
@@ -113,10 +117,44 @@ class Ads1299:
     self.spi.write(BYTESMAP[value])
     utime.sleep_us(20)
     
-  def start(self):
+  def start_loff_detect(self):
+    self.mode = LOFFDETECT
+    self.reset()
+    
+    # 进入配置模式
+    self.write_cmd(SDATAC)
+    
+    # 配置寄存器1：菊花链、时钟、采样率等
+    self.write_register(CONFIG1,ADS1299_CONFIG1_DAISY_NOT | self.samplingrate | CLOCK_EN)
+    
+    # 配置通道：增益、输入模式等
+    self.channel_setting()
+    
+    # 配置寄存器LOFF
+    # bit3:2 ILEAD_OFF: 0b00->6nA 0b01->24nA 0b10->6uA 0b11->24uA
+    # bit1:0 FLEAD_OFF: 0b00->DC 0b01->AC 7.8Hz 0b10->AC 31.2Hz 0b11->AC fdr/4
+    # 配置为6nA 31.2Hz激励
+    self.write_register(LOFF,0x02)
+
+    # 配置N-side通道连接上测试电流源
+    self.write_register(LOFF_SENSP,0x00)
+    self.write_register(LOFF_SENSN,0xFF)
+    
+    # 激励电流的方向，翻转，将AVDD连接到N-side，从N-side灌入电流
+    self.write_register(LOFF_FLIP,0xFF)
+    
+    # config4 开启lead-off comparators
+    self.write_register(CONFIG4,0x02)
+
+    # 完成配置，启动
+    self.write_cmd(START)
+    self.write_cmd(RDATAC)  #进入读数据模式
+    utime.sleep_ms(25)
+
+  def reset(self):
     self.cs.value(0)      #片选
     self.pown.value(1)    #唤醒
-    self.rst.value(1)     #复位
+    self.rst.value(1)     #复位,所有寄存器的设置
     utime.sleep_us(50)
     self.rst.value(0)
     utime.sleep_us(100)
@@ -127,6 +165,10 @@ class Ads1299:
       self.virgin = False
     else:
       utime.sleep_us(100)
+    
+  def start_data_acquire(self):
+    self.mode = EEGACQUIRE
+    self.reset() 
     
     # 进入配置模式
     self.write_cmd(SDATAC)
@@ -139,7 +181,7 @@ class Ads1299:
     
     
     # 配置寄存器2：测试信号
-    # 不配置
+    # 相当于内部产生一个信号，便于从后端观察系统运行情况
     
     # 配置通道：增益、输入模式等
     self.channel_setting()
@@ -164,6 +206,7 @@ class Ads1299:
     
 def main():
   ads = Ads1299()
+  ads.reset()
   ads.start()
   for i in range(240):
     print(ads.co)

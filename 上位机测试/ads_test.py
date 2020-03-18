@@ -16,7 +16,7 @@ sock.sendto(b'',('192.168.66.1',8089))
     # print(len(buf))
 
 ads_unpack = unpackAds1299Data()
-p = PlotEEG2(channels=2,notchfilter=True,yamp = 100)
+p = PlotEEG2(channels=2,notchfilter=False,yamp = 100)
 
 ndata = []
 
